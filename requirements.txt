@@ -1,10 +1,9 @@
+streamlit
 yfinance
+numpy
 pandas
-numpy<2.0.0
 matplotlib
 scikit-learn
 tensorflow-cpu
-streamlit
 requests
-plotly
-protobuf==3.20.3
+streamlit-autorefresh

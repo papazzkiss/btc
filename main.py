@@ -297,6 +297,30 @@ plt.plot(data["Signal_MACD"], label="Signal")
 plt.legend()
 
 st.pyplot(fig4)
+# --- PHẦN TELEGRAM ---
+st.sidebar.header("Cài đặt Telegram")
+tele_token = st.sidebar.text_input("Bot Token", type="password")
+tele_chat_id = st.sidebar.text_input("Chat ID")
+
+msg_content = f"""
+🚀 Tín hiệu AI Bitcoin mới!
+---
+📍 *Trạng thái:* {signal}
+💰 *Giá hiện tại:* ${last_price:,.2f}
+🔮 *Dự đoán ngày mai:* ${pred_tomorrow:,.2f}
+📈 *Thay đổi:* {profit_percent:.2f}%
+📊 *RSI:* {last_rsi:.2f}
+🎯 *Độ chính xác:* {accuracy:.2f}%
+"""
+
+if st.sidebar.button("Gửi báo cáo qua Telegram"):
+    if tele_token and tele_chat_id:
+        res = send_telegram_message(tele_token, tele_chat_id, msg_content)
+        if res and res.get("ok"): st.sidebar.success("✅ Đã gửi!")
+        else: st.sidebar.error("❌ Thất bại!")
+    else:
+        st.sidebar.warning("Vui lòng nhập Token/ID")
+
 
 # =============================
 # FORECAST

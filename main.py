@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
+import requests
 
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
@@ -16,8 +17,27 @@ st.set_page_config(page_title="AI Bitcoin Trading", layout="wide")
 st.title("📈 Hệ Thống Dự Đoán Bitcoin Bằng AI")
 
 # =============================
+# TELEGRAM FUNCTION
+# =============================
+
+def send_telegram_message(token, chat_id, text):
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
+
+    r = requests.post(url, data=payload)
+
+    return r.json()
+
+# =============================
 # LOAD DATA
 # =============================
+
 @st.cache_data
 def load_data():
     data = yf.download("BTC-USD", start="2018-01-01")
@@ -89,7 +109,7 @@ X = np.array(X)
 y = np.array(y)
 
 # =============================
-# TRAIN MODEL (CACHE)
+# TRAIN MODEL
 # =============================
 
 @st.cache_resource
@@ -127,16 +147,14 @@ for i in range(60, len(test_data)):
 X_test = np.array(X_test)
 
 predictions = model.predict(X_test)
-
 predictions = scaler.inverse_transform(predictions)
 
 real_price = data["Close"][training_len:]
+real_values = real_price.values[:len(predictions)]
 
 # =============================
 # AI ACCURACY
 # =============================
-
-real_values = real_price.values[:len(predictions)]
 
 mape = np.mean(np.abs((real_values - predictions.flatten()) / real_values)) * 100
 accuracy = 100 - mape
@@ -148,7 +166,6 @@ accuracy = 100 - mape
 future_days = 30
 
 last_60 = scaled_data[-60:]
-
 future = []
 
 for i in range(future_days):
@@ -222,10 +239,7 @@ st.subheader("💰 Mô phỏng đầu tư")
 
 investment = st.slider(
     "Số tiền đầu tư ($)",
-    min_value=100,
-    max_value=10000,
-    value=1000,
-    step=100
+    100,10000,1000,100
 )
 
 profit_money = investment * profit_percent / 100
@@ -244,8 +258,6 @@ fig = plt.figure(figsize=(12,6))
 plt.plot(data["Close"], label="Price")
 plt.plot(data["MA50"], label="MA50")
 plt.plot(data["MA200"], label="MA200")
-plt.plot(data["Upper"], label="Bollinger Upper")
-plt.plot(data["Lower"], label="Bollinger Lower")
 
 plt.legend()
 
@@ -270,16 +282,14 @@ st.pyplot(fig2)
 # RSI
 # =============================
 
-st.subheader("📊 Chỉ báo RSI")
+st.subheader("📊 RSI")
 
 fig3 = plt.figure(figsize=(12,4))
 
-plt.plot(data["RSI"], label="RSI")
+plt.plot(data["RSI"])
 
 plt.axhline(70)
 plt.axhline(30)
-
-plt.legend()
 
 st.pyplot(fig3)
 
@@ -287,40 +297,52 @@ st.pyplot(fig3)
 # MACD
 # =============================
 
-st.subheader("📊 Chỉ báo MACD")
+st.subheader("📊 MACD")
 
 fig4 = plt.figure(figsize=(12,4))
 
-plt.plot(data["MACD"], label="MACD")
-plt.plot(data["Signal_MACD"], label="Signal")
-
-plt.legend()
+plt.plot(data["MACD"])
+plt.plot(data["Signal_MACD"])
 
 st.pyplot(fig4)
-# --- PHẦN TELEGRAM ---
-st.sidebar.header("Cài đặt Telegram")
+
+# =============================
+# TELEGRAM
+# =============================
+
+st.sidebar.header("📲 Cài đặt Telegram")
+
 tele_token = st.sidebar.text_input("Bot Token", type="password")
 tele_chat_id = st.sidebar.text_input("Chat ID")
 
 msg_content = f"""
-🚀 Tín hiệu AI Bitcoin mới!
----
-📍 *Trạng thái:* {signal}
-💰 *Giá hiện tại:* ${last_price:,.2f}
-🔮 *Dự đoán ngày mai:* ${pred_tomorrow:,.2f}
-📈 *Thay đổi:* {profit_percent:.2f}%
-📊 *RSI:* {last_rsi:.2f}
-🎯 *Độ chính xác:* {accuracy:.2f}%
+🚀 Tín hiệu AI Bitcoin
+
+📍 Trạng thái: {signal}
+💰 Giá hiện tại: ${last_price:,.2f}
+🔮 Dự đoán ngày mai: ${pred_price:,.2f}
+📈 Thay đổi: {profit_percent:.2f}%
+📊 RSI: {last_rsi:.2f}
+🎯 Accuracy: {accuracy:.2f}%
 """
 
 if st.sidebar.button("Gửi báo cáo qua Telegram"):
-    if tele_token and tele_chat_id:
-        res = send_telegram_message(tele_token, tele_chat_id, msg_content)
-        if res and res.get("ok"): st.sidebar.success("✅ Đã gửi!")
-        else: st.sidebar.error("❌ Thất bại!")
-    else:
-        st.sidebar.warning("Vui lòng nhập Token/ID")
 
+    if tele_token and tele_chat_id:
+
+        res = send_telegram_message(
+            tele_token,
+            tele_chat_id,
+            msg_content
+        )
+
+        if res.get("ok"):
+            st.sidebar.success("✅ Đã gửi Telegram")
+        else:
+            st.sidebar.error("❌ Gửi thất bại")
+
+    else:
+        st.sidebar.warning("Nhập Token và Chat ID")
 
 # =============================
 # FORECAST
@@ -328,34 +350,13 @@ if st.sidebar.button("Gửi báo cáo qua Telegram"):
 
 st.subheader("🔮 Dự đoán 30 ngày")
 
-future_dates = pd.date_range(data.index[-1], periods=future_days+1)[1:]
+future_dates = pd.date_range(
+    data.index[-1],
+    periods=future_days+1
+)[1:]
 
 fig5 = plt.figure(figsize=(12,5))
 
-plt.plot(future_dates, future_prices, label="Future Price")
-
-plt.legend()
+plt.plot(future_dates, future_prices)
 
 st.pyplot(fig5)
-
-# =============================
-# AI EXPLANATION
-# =============================
-
-st.subheader("🤖 Giải thích mô hình")
-
-st.write("""
-Mô hình sử dụng **LSTM (Long Short Term Memory)** để học xu hướng giá Bitcoin.
-
-Dữ liệu đầu vào:  
-60 ngày giá gần nhất
-
-Kết hợp các chỉ báo:
-
-• RSI  
-• MACD  
-• Moving Average  
-• Bollinger Bands  
-
-để đưa ra tín hiệu **BUY / SELL / HOLD**.
-""")

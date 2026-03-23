@@ -16,21 +16,19 @@ from tensorflow.keras.layers import Dense, LSTM, Dropout
 # =============================
 # TELEGRAM
 # =============================
-
 def send_telegram_message(token, chat_id, text):
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
 
     payload = {
         "chat_id": chat_id,
-        "text": text
+        "text": text,
+        "parse_mode": "Markdown"
     }
 
-    try:
-        r = requests.post(url, data=payload, timeout=10)
-        return r.json()
-    except:
-        return {"ok": False}
+    r = requests.post(url, data=payload)
+
+    return r.json()
 
 
 # =============================
@@ -416,3 +414,20 @@ msg=f"""
 🎯 LSTM Acc: {accuracy:.2f}%
 🤖 RF Acc: {rf_accuracy:.2f}%
 """
+if st.sidebar.button("Gửi báo cáo qua Telegram"):
+
+    if tele_token and tele_chat_id:
+
+        res = send_telegram_message(
+            tele_token,
+            tele_chat_id,
+            msg_content
+        )
+
+        if res.get("ok"):
+            st.sidebar.success("✅ Đã gửi Telegram")
+        else:
+            st.sidebar.error("❌ Gửi thất bại")
+
+    else:
+        st.sidebar.warning("Nhập Token và Chat ID")

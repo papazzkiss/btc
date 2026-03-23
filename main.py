@@ -22,14 +22,14 @@ def send_telegram_message(token, chat_id, text):
 
     payload = {
         "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
+        "text": text
     }
 
-    r = requests.post(url, data=payload)
-
-    return r.json()
-
+    try:
+        requests.post(url, data=payload, timeout=3)
+        return {"ok": True}
+    except:
+        return {"ok": False}
 
 # =============================
 # CONFIG

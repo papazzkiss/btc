@@ -392,8 +392,8 @@ else:
 st.sidebar.header("Telegram Bot")
 
 
-tele_token=st.sidebar.text_input("Bot Token",type="password")
-tele_chat_id=st.sidebar.text_input("Chat ID")
+tele_token=st.sidebar.text_input("8314326426:AAHhuEnS1SOnOMwDf6sgHPb425Tthed055o",type="password")
+tele_chat_id=st.sidebar.text_input("5672320945")
 
 msg=f"""
 🚀 AI Bitcoin Signal

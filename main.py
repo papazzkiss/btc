@@ -8,7 +8,7 @@ import requests
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
-
+from tensorflow.keras.callbacks import EarlyStopping
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM, Dropout
 
@@ -125,7 +125,7 @@ def train_model(X,y):
     model.add(Dense(1))
 
     model.compile(optimizer="adam", loss="mse")
-    model.fit(X,y,epochs=25,batch_size=32,verbose=0)  # giảm lag
+    model.fit(X,y,epochs=25,callbacks=[early_stop],batch_size=32,verbose=0)  # giảm lag
 
     return model
 
@@ -185,15 +185,106 @@ rf_rmse=np.sqrt(mean_squared_error(y_rf[split:],rf_pred))
 
 st.subheader("🤖 AI Dashboard")
 
-col1,col2,col3,col4,col5,col6=st.columns(6)
+col1,col2,col3,col4,col5,col6,col7=st.columns(7)
 
 last_price=float(filtered_data["Close"].iloc[-1])
 pred_price=float(pred_close[-1])
 last_rsi=float(filtered_data["RSI"].iloc[-1])
 
-col1.metric("Giá",f"${last_price:,.0f}")
-col2.metric("Predict",f"${pred_price:,.0f}")
+col1.metric("Giá hiện tại",f"${last_price:,.0f}")
+col2.metric("LSTM Predict",f"${pred_price:,.0f}")
 col3.metric("RSI",f"{last_rsi:.2f}")
+col4.metric("LSTM Accuracy",f"{accuracy:.2f}%")
+col5.metric("RF RMSE",f"{rf_rmse:.0f}")
+col6.metric("RF Accuracy",f"{rf_accuracy:.2f}%")
+
+
+# =============================
+# PRICE CHART
+# =============================
+
+st.subheader("📈 Price Chart")
+
+fig=plt.figure(figsize=(12,6))
+
+plt.plot(filtered_data["Close"],label="Price")
+plt.plot(filtered_data["MA50"],label="MA50")
+plt.plot(filtered_data["MA200"],label="MA200")
+
+plt.legend()
+
+st.pyplot(fig)
+
+
+# =============================
+# RSI CHART
+# =============================
+
+st.subheader("📉 RSI Indicator")
+
+fig_rsi=plt.figure(figsize=(12,4))
+
+plt.plot(filtered_data["RSI"],label="RSI")
+
+plt.axhline(70,linestyle="--")
+plt.axhline(30,linestyle="--")
+
+plt.legend()
+
+st.pyplot(fig_rsi)
+
+
+# =============================
+# MACD CHART
+# =============================
+
+st.subheader("📊 MACD Indicator")
+
+fig_macd=plt.figure(figsize=(12,4))
+
+plt.plot(filtered_data["MACD"],label="MACD")
+plt.plot(filtered_data["Signal_MACD"],label="Signal")
+
+plt.legend()
+
+st.pyplot(fig_macd)
+
+
+# =============================
+# AI MODEL COMPARISON
+# =============================
+
+st.subheader("🤖 AI Model Comparison")
+
+fig_compare=plt.figure(figsize=(12,6))
+
+plt.plot(real_values,label="Real Price")
+plt.plot(pred_close,label="LSTM Prediction")
+
+plt.plot(
+    range(len(real_values)-len(rf_pred),len(real_values)),
+    rf_pred,
+    label="Random Forest"
+)
+
+plt.legend()
+st.pyplot(fig_compare)
+
+
+# =============================
+# MODEL PERFORMANCE
+# =============================
+
+st.subheader("🏆 AI Model Performance")
+
+compare_df=pd.DataFrame({
+"Model":["LSTM","Random Forest"],
+"Accuracy":[accuracy,rf_accuracy]
+})
+
+st.dataframe(compare_df,use_container_width=True)
+
+
 
 
 # =============================

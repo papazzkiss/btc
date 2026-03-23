@@ -162,7 +162,7 @@ def train_model(X,y):
         loss="mse"
     )
 
-    model.fit(X,y,epochs=50,batch_size=32,verbose=0)
+    model.fit(X,y,epochs=5,batch_size=32,verbose=0)
 
     return model
 

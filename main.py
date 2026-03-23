@@ -17,20 +17,20 @@ from tensorflow.keras.layers import Dense, LSTM, Dropout
 # TELEGRAM
 # =============================
 
+
 def send_telegram_message(token, chat_id, text):
 
     url = f"https://api.telegram.org/bot{token}/sendMessage"
 
     payload = {
         "chat_id": chat_id,
-        "text": text
+        "text": text,
+        "parse_mode": "Markdown"
     }
 
-    try:
-        r = requests.post(url, data=payload, timeout=10)
-        return r.json()
-    except:
-        return {"ok": False}
+    r = requests.post(url, data=payload)
+
+    return r.json()
 
 
 # =============================
@@ -372,32 +372,31 @@ st.dataframe(compare_df,use_container_width=True)
 # =============================
 # TELEGRAM
 # =============================
+msg_content = f"""
+🚀 Tín hiệu AI Bitcoin
 
-st.sidebar.header("Telegram Bot")
-
-tele_token=st.sidebar.text_input("Bot Token",type="password")
-tele_chat_id=st.sidebar.text_input("Chat ID")
-
-msg=f"""
-AI Bitcoin Signal
-
-Price: ${last_price:,.2f}
-Prediction: ${pred_price:,.2f}
-
-LSTM Accuracy: {accuracy:.2f}%
-RandomForest Accuracy: {rf_accuracy:.2f}%
+📍 Trạng thái: {signal}
+💰 Giá hiện tại: ${last_price:,.2f}
+🔮 Dự đoán ngày mai: ${pred_price:,.2f}
+📈 Thay đổi: {profit_percent:.2f}%
+📊 RSI: {last_rsi:.2f}
+🎯 Accuracy: {accuracy:.2f}%
 """
 
-if st.sidebar.button("Send Signal"):
+if st.sidebar.button("Gửi báo cáo qua Telegram"):
 
     if tele_token and tele_chat_id:
 
-        res=send_telegram_message(tele_token,tele_chat_id,msg)
+        res = send_telegram_message(
+            tele_token,
+            tele_chat_id,
+            msg_content
+        )
 
         if res.get("ok"):
-            st.sidebar.success("Đã gửi Telegram")
+            st.sidebar.success("✅ Đã gửi Telegram")
         else:
-            st.sidebar.error("Gửi thất bại")
+            st.sidebar.error("❌ Gửi thất bại")
 
     else:
         st.sidebar.warning("Nhập Token và Chat ID")

@@ -4,10 +4,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
 import requests
-import threading
 
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
 
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM
@@ -15,21 +15,16 @@ from tensorflow.keras.layers import Dense, LSTM
 # =============================
 # CONFIG
 # =============================
-st.set_page_config(page_title="AI Bitcoin PRO", layout="wide")
+st.set_page_config(page_title="AI Bitcoin Trading PRO", layout="wide")
 st.title("🚀 AI Bitcoin Trading PRO")
 
 # =============================
-# TELEGRAM FAST
+# TELEGRAM
 # =============================
-def send_async(token, chat_id, text):
-    try:
-        requests.post(
-            f"https://api.telegram.org/bot{token}/sendMessage",
-            data={"chat_id": chat_id, "text": text},
-            timeout=3
-        )
-    except:
-        pass
+def send_telegram_message(token, chat_id, text):
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    return requests.post(url, data=payload).json()
 
 # =============================
 # LOAD DATA
@@ -43,6 +38,12 @@ def load_data():
 data = load_data()
 
 # =============================
+# BẢNG 1: DATA GỐC
+# =============================
+st.subheader("📊 Bảng 1: Dữ liệu gốc")
+st.dataframe(data.tail(10), use_container_width=True)
+
+# =============================
 # INDICATORS
 # =============================
 data["MA50"] = data["Close"].rolling(50).mean()
@@ -53,231 +54,178 @@ delta = data["Close"].diff()
 gain = delta.clip(lower=0)
 loss = -delta.clip(upper=0)
 
-avg_gain = gain.rolling(14).mean()
-avg_loss = loss.rolling(14).mean()
-
-rs = avg_gain / avg_loss
-data["RSI"] = 100 - (100 / (1 + rs))
+rs = gain.rolling(14).mean() / loss.rolling(14).mean()
+data["RSI"] = 100 - (100/(1+rs))
 
 # MACD
-exp1 = data["Close"].ewm(span=12, adjust=False).mean()
-exp2 = data["Close"].ewm(span=26, adjust=False).mean()
-
+exp1 = data["Close"].ewm(span=12).mean()
+exp2 = data["Close"].ewm(span=26).mean()
 data["MACD"] = exp1 - exp2
-data["Signal_MACD"] = data["MACD"].ewm(span=9, adjust=False).mean()
+data["Signal"] = data["MACD"].ewm(span=9).mean()
 
 data.dropna(inplace=True)
 
 # =============================
-# DATA TABLE
+# BẢNG 2: INDICATORS
 # =============================
-st.subheader("📊 Data")
-st.dataframe(data.tail(10), use_container_width=True)
+st.subheader("📊 Bảng 2: Indicators")
+st.dataframe(data[["Close","MA50","MA200","RSI","MACD"]].tail(10), use_container_width=True)
 
 # =============================
-# LSTM FEATURES
+# LSTM
 # =============================
-features = data[["Close","RSI","MACD","Signal_MACD"]]
+dataset = data["Close"].values.reshape(-1,1)
 
 scaler = MinMaxScaler()
-scaled_data = scaler.fit_transform(features)
+scaled = scaler.fit_transform(dataset)
 
-training_len = int(len(scaled_data)*0.8)
-train_data = scaled_data[:training_len]
+train_len = int(len(scaled)*0.8)
 
-X, y = [], []
+X,y=[],[]
 
-for i in range(60, len(train_data)):
-    X.append(train_data[i-60:i])
-    y.append(train_data[i,0])
+for i in range(60,train_len):
+    X.append(scaled[i-60:i])
+    y.append(scaled[i])
 
-X, y = np.array(X), np.array(y)
+X,y=np.array(X),np.array(y)
 
-# =============================
-# LSTM MODEL
-# =============================
-@st.cache_resource
-def train_model(X,y):
-    model = Sequential()
-    model.add(LSTM(64, return_sequences=True, input_shape=(X.shape[1], X.shape[2])))
-    model.add(LSTM(64))
-    model.add(Dense(25))
-    model.add(Dense(1))
+model=Sequential()
+model.add(LSTM(64,return_sequences=True,input_shape=(60,1)))
+model.add(LSTM(64))
+model.add(Dense(1))
+model.compile(optimizer="adam",loss="mse")
 
-    model.compile(optimizer="adam", loss="mse")
-    model.fit(X,y,epochs=15,batch_size=32,verbose=0)
+model.fit(X,y,epochs=5,batch_size=32,verbose=0)
 
-    return model
+# TEST
+test = scaled[train_len-60:]
+X_test=[]
 
-model = train_model(X,y)
+for i in range(60,len(test)):
+    X_test.append(test[i-60:i])
 
-# =============================
-# TEST LSTM
-# =============================
-test_data = scaled_data[training_len-60:]
+X_test=np.array(X_test)
 
-X_test = []
+pred=model.predict(X_test)
+pred=scaler.inverse_transform(pred)
 
-for i in range(60, len(test_data)):
-    X_test.append(test_data[i-60:i])
-
-X_test = np.array(X_test)
-
-predictions = model.predict(X_test, verbose=0)
-
-pred_close = []
-
-for i in range(len(predictions)):
-    row = test_data[60+i].copy()
-    row[0] = predictions[i][0]
-    inv = scaler.inverse_transform([row])
-    pred_close.append(inv[0][0])
-
-pred_close = np.array(pred_close)
-
-real_values = data["Close"][training_len:].values[:len(pred_close)]
-
-# =============================
-# LSTM ACCURACY
-# =============================
-mape = np.mean(np.abs((real_values - pred_close)/real_values))*100
-accuracy = 100 - mape
+real=data["Close"][train_len:].values[:len(pred)]
 
 # =============================
 # RANDOM FOREST
 # =============================
-rf_data = data[["Close"]].copy()
+rf = data[["Close"]].copy()
+rf["lag1"]=rf["Close"].shift(1)
+rf["lag2"]=rf["Close"].shift(2)
+rf["lag3"]=rf["Close"].shift(3)
+rf.dropna(inplace=True)
 
-rf_data["lag1"] = rf_data["Close"].shift(1)
-rf_data["lag2"] = rf_data["Close"].shift(2)
-rf_data["lag3"] = rf_data["Close"].shift(3)
+X_rf=rf[["lag1","lag2","lag3"]]
+y_rf=rf["Close"]
 
-rf_data.dropna(inplace=True)
+split=int(len(rf)*0.8)
 
-X_rf = rf_data[["lag1","lag2","lag3"]]
-y_rf = rf_data["Close"]
+X_train_rf=X_rf[:split]
+X_test_rf=X_rf[split:]
+y_train_rf=y_rf[:split]
+y_test_rf=y_rf[split:]
 
-split = int(len(rf_data)*0.8)
+model_rf=RandomForestRegressor(n_estimators=100)
+model_rf.fit(X_train_rf,y_train_rf)
 
-X_train_rf = X_rf[:split]
-X_test_rf = X_rf[split:]
+rf_pred=model_rf.predict(X_test_rf)
 
-y_train_rf = y_rf[:split]
-y_test_rf = y_rf[split:]
-
-# FIX LỖI CHÍNH
+# FIX LỖI Ở ĐÂY
 y_test_rf = y_test_rf.values
 
-@st.cache_resource
-def train_rf(X,y):
-    model = RandomForestRegressor(n_estimators=100,max_depth=10,random_state=42)
-    model.fit(X,y)
-    return model
-
-rf_model = train_rf(X_train_rf,y_train_rf)
-
-rf_pred = rf_model.predict(X_test_rf)
-
-rf_mape = np.mean(np.abs((y_test_rf - rf_pred) / y_test_rf)) * 100
-rf_accuracy = 100 - rf_mape
+rf_rmse=np.sqrt(mean_squared_error(y_test_rf,rf_pred))
+rf_mape=np.mean(np.abs((y_test_rf-rf_pred)/y_test_rf))*100
+rf_acc=100-rf_mape
 
 # =============================
-# SIGNAL PRO
+# LSTM ACC
 # =============================
-last_price = float(data["Close"].iloc[-1])
-pred_price = float(pred_close[-1])
-last_rsi = float(data["RSI"].iloc[-1])
-
-change = (pred_price - last_price) / last_price
-profit_percent = change * 100
-
-signal = "HOLD"
-
-if change > 0.02 and last_rsi < 65:
-    signal = "BUY"
-elif change < -0.02 and last_rsi > 35:
-    signal = "SELL"
+mape=np.mean(np.abs((real-pred.flatten())/real))*100
+lstm_acc=100-mape
 
 # =============================
-# DASHBOARD
+# BẢNG 3: DỰ ĐOÁN
 # =============================
-st.subheader("🤖 AI Dashboard")
-
-c1,c2,c3,c4,c5 = st.columns(5)
-
-c1.metric("Price", f"${last_price:,.0f}")
-c2.metric("Predict", f"${pred_price:,.0f}")
-c3.metric("RSI", f"{last_rsi:.2f}")
-c4.metric("LSTM Acc", f"{accuracy:.2f}%")
-c5.metric("RF Acc", f"{rf_accuracy:.2f}%")
-
-# =============================
-# SIGNAL UI
-# =============================
-st.subheader("📢 Trading Signal")
-
-if signal == "BUY":
-    st.success(f"🟢 BUY (+{profit_percent:.2f}%)")
-elif signal == "SELL":
-    st.error(f"🔴 SELL ({profit_percent:.2f}%)")
-else:
-    st.warning(f"🟡 HOLD ({profit_percent:.2f}%)")
-
-# =============================
-# MODEL COMPARISON
-# =============================
-st.subheader("🏆 Model Comparison")
-
-compare_df = pd.DataFrame({
-    "Model": ["LSTM PRO", "Random Forest"],
-    "Accuracy": [round(accuracy,2), round(rf_accuracy,2)]
+df_pred=pd.DataFrame({
+    "Real": real,
+    "LSTM": pred.flatten()
 })
 
-st.dataframe(compare_df, use_container_width=True)
+st.subheader("📊 Bảng 3: LSTM Prediction")
+st.dataframe(df_pred.tail(10), use_container_width=True)
 
 # =============================
-# CHART
+# BẢNG 4: RANDOM FOREST
 # =============================
-st.subheader("📊 AI vs Real")
+df_rf=pd.DataFrame({
+    "Real": y_test_rf,
+    "RF": rf_pred
+})
 
-fig = plt.figure(figsize=(12,6))
+st.subheader("📊 Bảng 4: Random Forest")
+st.dataframe(df_rf.tail(10), use_container_width=True)
 
-plt.plot(real_values, label="Real")
-plt.plot(pred_close, label="LSTM")
+# =============================
+# BẢNG 5: SO SÁNH MODEL
+# =============================
+compare=pd.DataFrame({
+    "Model":["LSTM","Random Forest"],
+    "Accuracy":[lstm_acc,rf_acc]
+})
 
-plt.plot(
-    range(len(real_values)-len(rf_pred), len(real_values)),
-    rf_pred,
-    label="Random Forest"
-)
+st.subheader("📊 Bảng 5: So sánh AI")
+st.dataframe(compare, use_container_width=True)
 
-plt.legend()
-st.pyplot(fig)
+# =============================
+# SIGNAL
+# =============================
+last_price=float(data["Close"].iloc[-1])
+pred_price=float(pred[-1])
+
+change=(pred_price-last_price)/last_price
+rsi=float(data["RSI"].iloc[-1])
+
+if change>0.02 and rsi<70:
+    signal="BUY"
+elif change<-0.02 and rsi>30:
+    signal="SELL"
+else:
+    signal="HOLD"
+
+st.subheader("📢 Tín hiệu")
+
+if signal=="BUY":
+    st.success("🟢 BUY")
+elif signal=="SELL":
+    st.error("🔴 SELL")
+else:
+    st.warning("🟡 HOLD")
 
 # =============================
 # TELEGRAM
 # =============================
-st.sidebar.header("📲 Telegram")
+st.sidebar.header("Telegram")
 
-token = st.sidebar.text_input("Token", type="password")
-chat_id = st.sidebar.text_input("Chat ID")
+token=st.sidebar.text_input("Token")
+chat_id=st.sidebar.text_input("Chat ID")
 
-msg = f"""
-🚀 AI PRO SIGNAL
+msg=f"""
+AI SIGNAL
 
 Signal: {signal}
-Price: ${last_price:,.2f}
-Predict: ${pred_price:,.2f}
-Change: {profit_percent:.2f}%
+Price: {last_price}
+Pred: {pred_price}
 
-RSI: {last_rsi:.2f}
-LSTM: {accuracy:.2f}%
-RF: {rf_accuracy:.2f}%
+LSTM: {lstm_acc:.2f}%
+RF: {rf_acc:.2f}%
 """
 
 if st.sidebar.button("Send"):
     if token and chat_id:
-        threading.Thread(target=send_async, args=(token, chat_id, msg)).start()
-        st.sidebar.success("Sent instantly 🚀")
-    else:
-        st.sidebar.warning("Missing info")
+        send_telegram_message(token,chat_id,msg)
+        st.sidebar.success("Sent")

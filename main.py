@@ -125,7 +125,7 @@ def train_model(X,y):
     model.add(Dense(1))
 
     model.compile(optimizer="adam", loss="mse")
-    model.fit(X,y,epochs=25,callbacks=[early_stop],batch_size=32,verbose=0)  # giảm lag
+    model.fit(X,y,epochs=25,batch_size=32,verbose=0)  # giảm lag
 
     return model
 

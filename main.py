@@ -32,16 +32,7 @@ def send_telegram_message(token, chat_id, text):
 
     return r.json()
 
-st.subheader("📢 Tín hiệu giao dịch")
 
-if signal == "BUY":
-    st.success("🟢 BUY")
-
-elif signal == "SELL":
-    st.error("🔴 SELL")
-
-else:
-    st.warning("🟡 HOLD")
 # =============================
 # CONFIG
 # =============================
@@ -58,7 +49,7 @@ st.title("📈 Hệ Thống Dự Đoán Bitcoin Bằng AI")
 @st.cache_data
 def load_data():
 
-    data = yf.download("BTC-USD", start="2025-01-01")
+    data = yf.download("BTC-USD", start="2020-01-01")
 
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)
@@ -379,7 +370,26 @@ st.dataframe(compare_df,use_container_width=True)
 
 st.subheader("📢 Tín hiệu giao dịch")
 
+# =============================
+# SIGNAL LOGIC
+# =============================
 
+profit_percent = ((pred_price - last_price) / last_price) * 100
+
+if profit_percent > 2 and last_rsi < 70:
+    signal = "BUY"
+elif profit_percent < -2 and last_rsi > 30:
+    signal = "SELL"
+else:
+    signal = "HOLD"
+st.subheader("📢 Tín hiệu giao dịch")
+
+if signal == "BUY":
+    st.success("🟢 BUY")
+elif signal == "SELL":
+    st.error("🔴 SELL")
+else:
+    st.warning("🟡 HOLD")
 # =============================
 # TELEGRAM
 # =============================

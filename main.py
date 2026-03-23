@@ -75,7 +75,7 @@ st.subheader("📊 Data")
 st.dataframe(data.tail(10), use_container_width=True)
 
 # =============================
-# FEATURES (PRO)
+# LSTM FEATURES
 # =============================
 features = data[["Close","RSI","MACD","Signal_MACD"]]
 
@@ -94,11 +94,10 @@ for i in range(60, len(train_data)):
 X, y = np.array(X), np.array(y)
 
 # =============================
-# LSTM MODEL PRO
+# LSTM MODEL
 # =============================
 @st.cache_resource
 def train_model(X,y):
-
     model = Sequential()
     model.add(LSTM(64, return_sequences=True, input_shape=(X.shape[1], X.shape[2])))
     model.add(LSTM(64))
@@ -113,7 +112,7 @@ def train_model(X,y):
 model = train_model(X,y)
 
 # =============================
-# TEST
+# TEST LSTM
 # =============================
 test_data = scaled_data[training_len-60:]
 
@@ -126,7 +125,6 @@ X_test = np.array(X_test)
 
 predictions = model.predict(X_test, verbose=0)
 
-# inverse
 pred_close = []
 
 for i in range(len(predictions)):
@@ -140,11 +138,10 @@ pred_close = np.array(pred_close)
 real_values = data["Close"][training_len:].values[:len(pred_close)]
 
 # =============================
-# ACCURACY + CONFIDENCE
+# LSTM ACCURACY
 # =============================
 mape = np.mean(np.abs((real_values - pred_close)/real_values))*100
 accuracy = 100 - mape
-confidence = accuracy / 100
 
 # =============================
 # RANDOM FOREST
@@ -168,9 +165,12 @@ X_test_rf = X_rf[split:]
 y_train_rf = y_rf[:split]
 y_test_rf = y_rf[split:]
 
+# FIX LỖI CHÍNH
+y_test_rf = y_test_rf.values
+
 @st.cache_resource
 def train_rf(X,y):
-    model = RandomForestRegressor(n_estimators=100,max_depth=10)
+    model = RandomForestRegressor(n_estimators=100,max_depth=10,random_state=42)
     model.fit(X,y)
     return model
 
@@ -178,7 +178,7 @@ rf_model = train_rf(X_train_rf,y_train_rf)
 
 rf_pred = rf_model.predict(X_test_rf)
 
-rf_mape = np.mean(np.abs((y_test_rf-rf_pred)/y_test_rf))*100
+rf_mape = np.mean(np.abs((y_test_rf - rf_pred) / y_test_rf)) * 100
 rf_accuracy = 100 - rf_mape
 
 # =============================
@@ -189,6 +189,7 @@ pred_price = float(pred_close[-1])
 last_rsi = float(data["RSI"].iloc[-1])
 
 change = (pred_price - last_price) / last_price
+profit_percent = change * 100
 
 signal = "HOLD"
 
@@ -198,17 +199,17 @@ elif change < -0.02 and last_rsi > 35:
     signal = "SELL"
 
 # =============================
-# DASHBOARD PRO
+# DASHBOARD
 # =============================
-st.subheader("🤖 AI Dashboard PRO")
+st.subheader("🤖 AI Dashboard")
 
 c1,c2,c3,c4,c5 = st.columns(5)
 
 c1.metric("Price", f"${last_price:,.0f}")
-c2.metric("Prediction", f"${pred_price:,.0f}")
+c2.metric("Predict", f"${pred_price:,.0f}")
 c3.metric("RSI", f"{last_rsi:.2f}")
-c4.metric("Accuracy", f"{accuracy:.2f}%")
-c5.metric("Confidence", f"{confidence:.2f}")
+c4.metric("LSTM Acc", f"{accuracy:.2f}%")
+c5.metric("RF Acc", f"{rf_accuracy:.2f}%")
 
 # =============================
 # SIGNAL UI
@@ -216,11 +217,11 @@ c5.metric("Confidence", f"{confidence:.2f}")
 st.subheader("📢 Trading Signal")
 
 if signal == "BUY":
-    st.success("🟢 STRONG BUY")
+    st.success(f"🟢 BUY (+{profit_percent:.2f}%)")
 elif signal == "SELL":
-    st.error("🔴 STRONG SELL")
+    st.error(f"🔴 SELL ({profit_percent:.2f}%)")
 else:
-    st.warning("🟡 WAIT")
+    st.warning(f"🟡 HOLD ({profit_percent:.2f}%)")
 
 # =============================
 # MODEL COMPARISON
@@ -235,24 +236,23 @@ compare_df = pd.DataFrame({
 st.dataframe(compare_df, use_container_width=True)
 
 # =============================
-# CHARTS PRO
+# CHART
 # =============================
-st.subheader("📈 Price + AI")
-
-fig = plt.figure(figsize=(12,6))
-plt.plot(data["Close"], label="Price")
-plt.plot(data["MA50"], label="MA50")
-plt.plot(data["MA200"], label="MA200")
-plt.legend()
-st.pyplot(fig)
-
 st.subheader("📊 AI vs Real")
 
-fig2 = plt.figure(figsize=(12,6))
+fig = plt.figure(figsize=(12,6))
+
 plt.plot(real_values, label="Real")
 plt.plot(pred_close, label="LSTM")
+
+plt.plot(
+    range(len(real_values)-len(rf_pred), len(real_values)),
+    rf_pred,
+    label="Random Forest"
+)
+
 plt.legend()
-st.pyplot(fig2)
+st.pyplot(fig)
 
 # =============================
 # TELEGRAM
@@ -268,9 +268,11 @@ msg = f"""
 Signal: {signal}
 Price: ${last_price:,.2f}
 Predict: ${pred_price:,.2f}
+Change: {profit_percent:.2f}%
 
 RSI: {last_rsi:.2f}
-Acc: {accuracy:.2f}%
+LSTM: {accuracy:.2f}%
+RF: {rf_accuracy:.2f}%
 """
 
 if st.sidebar.button("Send"):

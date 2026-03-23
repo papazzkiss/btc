@@ -162,7 +162,7 @@ def train_model(X,y):
         loss="mse"
     )
 
-    model.fit(X,y,epochs=5,batch_size=32,verbose=0)
+    model.fit(X,y,epochs=50,batch_size=32,verbose=0)
 
     return model
 
@@ -401,7 +401,7 @@ st.sidebar.header("Telegram Bot")
 tele_token=st.sidebar.text_input("Bot Token",type="password")
 tele_chat_id=st.sidebar.text_input("Chat ID")
 
-msg=f"""
+msg_content=f"""
 🚀 AI Bitcoin Signal
 
 📍 Signal: {signal}

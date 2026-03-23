@@ -8,7 +8,7 @@ import requests
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
-from tensorflow.keras.callbacks import EarlyStopping
+
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM, Dropout
 
@@ -125,7 +125,7 @@ def train_model(X,y):
     model.add(Dense(1))
 
     model.compile(optimizer="adam", loss="mse")
-    model.fit(X,y,epochs=25,callbacks=[early_stop],batch_size=32,verbose=0)  # giảm lag
+    model.fit(X,y,epochs=15,batch_size=32,verbose=0)  # giảm lag
 
     return model
 

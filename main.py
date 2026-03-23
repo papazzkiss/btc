@@ -6,18 +6,15 @@ import streamlit as st
 import requests
 
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error
+
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, LSTM
+from tensorflow.keras.layers import Dense, LSTM, Dropout
+
 
 # =============================
-# CONFIG WEB
-# =============================
-st.set_page_config(page_title="AI Bitcoin Trading", layout="wide")
-
-st.title("📈 Hệ Thống Dự Đoán Bitcoin Bằng AI")
-
-# =============================
-# TELEGRAM FUNCTION
+# TELEGRAM
 # =============================
 
 def send_telegram_message(token, chat_id, text):
@@ -26,13 +23,24 @@ def send_telegram_message(token, chat_id, text):
 
     payload = {
         "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
+        "text": text
     }
 
-    r = requests.post(url, data=payload)
+    try:
+        r = requests.post(url, data=payload, timeout=10)
+        return r.json()
+    except:
+        return {"ok": False}
 
-    return r.json()
+
+# =============================
+# CONFIG
+# =============================
+
+st.set_page_config(page_title="AI Bitcoin Trading", layout="wide")
+
+st.title("📈 Hệ Thống Dự Đoán Bitcoin Bằng AI")
+
 
 # =============================
 # LOAD DATA
@@ -40,27 +48,41 @@ def send_telegram_message(token, chat_id, text):
 
 @st.cache_data
 def load_data():
-    data = yf.download("BTC-USD", start="2018-01-01")
+
+    data = yf.download("BTC-USD", start="2020-01-01")
+
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+
     data.dropna(inplace=True)
+
     return data
+
 
 data = load_data()
 
-st.subheader("📊 Dữ liệu Bitcoin gần nhất")
 
-table = data.tail(10)
-styled_table = table.style.format("{:.2f}")
-st.dataframe(styled_table, use_container_width=True)
+# =============================
+# DATA TABLE
+# =============================
+
+st.subheader("📊 Dữ liệu Bitcoin")
+
+rows = st.slider("Số dòng hiển thị",5,100,10)
+
+st.dataframe(data.tail(rows),use_container_width=True)
+
 
 # =============================
 # TECHNICAL INDICATORS
 # =============================
 
-data["MA50"] = data["Close"].rolling(50).mean()
-data["MA200"] = data["Close"].rolling(200).mean()
+filtered_data = data.copy()
 
-# RSI
-delta = data["Close"].diff()
+filtered_data["MA50"] = filtered_data["Close"].rolling(50).mean()
+filtered_data["MA200"] = filtered_data["Close"].rolling(200).mean()
+
+delta = filtered_data["Close"].diff()
 
 gain = delta.clip(lower=0)
 loss = -delta.clip(upper=0)
@@ -69,294 +91,313 @@ avg_gain = gain.rolling(14).mean()
 avg_loss = loss.rolling(14).mean()
 
 rs = avg_gain / avg_loss
-data["RSI"] = 100 - (100 / (1 + rs))
 
-# MACD
-exp1 = data["Close"].ewm(span=12, adjust=False).mean()
-exp2 = data["Close"].ewm(span=26, adjust=False).mean()
+filtered_data["RSI"] = 100 - (100 / (1 + rs))
 
-data["MACD"] = exp1 - exp2
-data["Signal_MACD"] = data["MACD"].ewm(span=9, adjust=False).mean()
+exp1 = filtered_data["Close"].ewm(span=12, adjust=False).mean()
+exp2 = filtered_data["Close"].ewm(span=26, adjust=False).mean()
 
-# Bollinger
-data["MA20"] = data["Close"].rolling(20).mean()
-data["STD"] = data["Close"].rolling(20).std()
+filtered_data["MACD"] = exp1 - exp2
+filtered_data["Signal_MACD"] = filtered_data["MACD"].ewm(span=9, adjust=False).mean()
 
-data["Upper"] = data["MA20"] + 2 * data["STD"]
-data["Lower"] = data["MA20"] - 2 * data["STD"]
+filtered_data.dropna(inplace=True)
+
 
 # =============================
-# AI DATA PREPARE
+# FEATURES
 # =============================
 
-dataset = data["Close"].values.reshape(-1, 1)
+features = filtered_data[
+["Close","MA50","MA200","RSI","MACD","Signal_MACD"]
+]
+
+dataset = features.values
+
+
+# =============================
+# SCALE
+# =============================
 
 scaler = MinMaxScaler()
+
 scaled_data = scaler.fit_transform(dataset)
 
-training_len = int(len(scaled_data) * 0.8)
+training_len = int(len(scaled_data)*0.8)
 
 train_data = scaled_data[:training_len]
 
-X = []
-y = []
-
-for i in range(60, len(train_data)):
-    X.append(train_data[i-60:i])
-    y.append(train_data[i])
-
-X = np.array(X)
-y = np.array(y)
 
 # =============================
-# TRAIN MODEL
+# SEQUENCE
 # =============================
 
-@st.cache_resource
-def train_model(X, y):
+window = 90
 
-    model = Sequential()
+X=[]
+y=[]
 
-    model.add(LSTM(64, return_sequences=True, input_shape=(X.shape[1],1)))
+for i in range(window,len(train_data)):
+
+    X.append(train_data[i-window:i])
+    y.append(train_data[i,0])
+
+X=np.array(X)
+y=np.array(y)
+
+
+# =============================
+# TRAIN LSTM MODEL
+# =============================
+
+def train_model(X,y):
+
+    model=Sequential()
+
+    model.add(LSTM(128,return_sequences=True,input_shape=(X.shape[1],X.shape[2])))
+    model.add(Dropout(0.3))
+
     model.add(LSTM(64))
-    model.add(Dense(25))
     model.add(Dense(1))
 
     model.compile(
         optimizer="adam",
-        loss="mean_squared_error"
+        loss="mse"
     )
 
-    model.fit(X, y, epochs=5, batch_size=32, verbose=0)
+    model.fit(X,y,epochs=50,batch_size=32,verbose=0)
 
     return model
 
-model = train_model(X,y)
+
+model=train_model(X,y)
+
 
 # =============================
-# TEST DATA
+# TEST LSTM
 # =============================
 
-test_data = scaled_data[training_len - 60:]
+test_data=scaled_data[training_len-window:]
 
-X_test = []
+X_test=[]
 
-for i in range(60, len(test_data)):
-    X_test.append(test_data[i-60:i])
+for i in range(window,len(test_data)):
 
-X_test = np.array(X_test)
+    X_test.append(test_data[i-window:i])
 
-predictions = model.predict(X_test)
-predictions = scaler.inverse_transform(predictions)
+X_test=np.array(X_test)
 
-real_price = data["Close"][training_len:]
-real_values = real_price.values[:len(predictions)]
+predictions=model.predict(X_test,verbose=0)
+
+pred_close=[]
+
+for i in range(len(predictions)):
+
+    row=test_data[window+i].copy()
+    row[0]=predictions[i][0]
+
+    inv=scaler.inverse_transform([row])
+
+    pred_close.append(inv[0][0])
+
+pred_close=np.array(pred_close)
+
+real_values=filtered_data["Close"][training_len:].values[:len(pred_close)]
+
 
 # =============================
-# AI ACCURACY
+# RANDOM FOREST MODEL
 # =============================
 
-mape = np.mean(np.abs((real_values - predictions.flatten()) / real_values)) * 100
-accuracy = 100 - mape
+rf_data = filtered_data[["Close"]].copy()
 
-# =============================
-# FUTURE PREDICTION
-# =============================
+rf_data["lag1"] = rf_data["Close"].shift(1)
+rf_data["lag2"] = rf_data["Close"].shift(2)
+rf_data["lag3"] = rf_data["Close"].shift(3)
 
-future_days = 30
+rf_data.dropna(inplace=True)
 
-last_60 = scaled_data[-60:]
-future = []
+X_rf = rf_data[["lag1","lag2","lag3"]]
+y_rf = rf_data["Close"]
 
-for i in range(future_days):
+split = int(len(rf_data)*0.8)
 
-    x = last_60.reshape(1,60,1)
+X_train_rf = X_rf[:split]
+X_test_rf = X_rf[split:]
 
-    pred = model.predict(x, verbose=0)
+y_train_rf = y_rf[:split]
+y_test_rf = y_rf[split:]
 
-    future.append(pred[0][0])
-
-    last_60 = np.append(last_60[1:], pred)
-
-future_prices = scaler.inverse_transform(
-    np.array(future).reshape(-1,1)
+rf_model = RandomForestRegressor(
+    n_estimators=200,
+    max_depth=10,
+    random_state=42
 )
 
+rf_model.fit(X_train_rf, y_train_rf)
+
+rf_pred = rf_model.predict(X_test_rf)
+
+rf_rmse = np.sqrt(mean_squared_error(y_test_rf, rf_pred))
+
+
 # =============================
-# TRADING SIGNAL
+# ACCURACY
 # =============================
 
-last_price = float(data["Close"].iloc[-1])
-pred_price = float(future_prices[0][0])
+recent=150
 
-change = (pred_price - last_price) / last_price
-profit_percent = change * 100
+real_recent=real_values[-recent:]
+pred_recent=pred_close[-recent:]
 
-last_rsi = float(data["RSI"].iloc[-1])
+mape=np.mean(np.abs((real_recent-pred_recent)/real_recent))*100
 
-signal = "HOLD"
+accuracy=100-mape
 
-if change > 0.02 and last_rsi < 70:
-    signal = "BUY"
+rf_recent = min(150, len(rf_pred))
 
-elif change < -0.02 and last_rsi > 30:
-    signal = "SELL"
+rf_real_recent = y_test_rf.values[-rf_recent:]
+rf_pred_recent = rf_pred[-rf_recent:]
+
+rf_mape = np.mean(np.abs((rf_real_recent-rf_pred_recent)/rf_real_recent))*100
+
+rf_accuracy = 100-rf_mape
+
 
 # =============================
 # DASHBOARD
 # =============================
 
-st.subheader("🤖 Kết quả AI")
+st.subheader("🤖 AI Dashboard")
 
-col1,col2,col3,col4,col5 = st.columns(5)
+col1,col2,col3,col4,col5,col6,col7=st.columns(7)
 
-col1.metric("Giá hiện tại", f"${last_price:,.0f}")
-col2.metric("Dự đoán ngày mai", f"${pred_price:,.0f}")
-col3.metric("RSI", f"{last_rsi:.2f}")
-col4.metric("AI Accuracy", f"{accuracy:.2f}%")
-col5.metric("Profit %", f"{profit_percent:.2f}%")
+last_price=float(filtered_data["Close"].iloc[-1])
+pred_price=float(pred_close[-1])
+last_rsi=float(filtered_data["RSI"].iloc[-1])
 
-# =============================
-# SIGNAL
-# =============================
+col1.metric("Giá hiện tại",f"${last_price:,.0f}")
+col2.metric("LSTM Predict",f"${pred_price:,.0f}")
+col3.metric("RSI",f"{last_rsi:.2f}")
+col4.metric("LSTM Accuracy",f"{accuracy:.2f}%")
+col5.metric("RF RMSE",f"{rf_rmse:.0f}")
+col6.metric("RF Accuracy",f"{rf_accuracy:.2f}%")
 
-st.subheader("📢 Tín hiệu giao dịch")
-
-if signal == "BUY":
-    st.success("🟢 BUY")
-
-elif signal == "SELL":
-    st.error("🔴 SELL")
-
-else:
-    st.warning("🟡 HOLD")
-
-# =============================
-# INVESTMENT SIMULATION
-# =============================
-
-st.subheader("💰 Mô phỏng đầu tư")
-
-investment = st.slider(
-    "Số tiền đầu tư ($)",
-    100,10000,1000,100
-)
-
-profit_money = investment * profit_percent / 100
-
-st.write(f"Nếu đầu tư {investment}$")
-st.write(f"Lợi nhuận dự kiến: {profit_money:.2f}$")
 
 # =============================
 # PRICE CHART
 # =============================
 
-st.subheader("📈 Biểu đồ giá Bitcoin")
+st.subheader("📈 Price Chart")
 
-fig = plt.figure(figsize=(12,6))
+fig=plt.figure(figsize=(12,6))
 
-plt.plot(data["Close"], label="Price")
-plt.plot(data["MA50"], label="MA50")
-plt.plot(data["MA200"], label="MA200")
+plt.plot(filtered_data["Close"],label="Price")
+plt.plot(filtered_data["MA50"],label="MA50")
+plt.plot(filtered_data["MA200"],label="MA200")
 
 plt.legend()
 
 st.pyplot(fig)
 
+
 # =============================
-# AI VS REAL
+# RSI CHART
 # =============================
 
-st.subheader("📊 So sánh AI vs Giá thật")
+st.subheader("📉 RSI Indicator")
 
-fig2 = plt.figure(figsize=(12,6))
+fig_rsi=plt.figure(figsize=(12,4))
 
-plt.plot(real_values, label="Real Price")
-plt.plot(predictions.flatten(), label="AI Prediction")
+plt.plot(filtered_data["RSI"],label="RSI")
+
+plt.axhline(70,linestyle="--")
+plt.axhline(30,linestyle="--")
 
 plt.legend()
 
-st.pyplot(fig2)
+st.pyplot(fig_rsi)
+
 
 # =============================
-# RSI
+# MACD CHART
 # =============================
 
-st.subheader("📊 RSI")
+st.subheader("📊 MACD Indicator")
 
-fig3 = plt.figure(figsize=(12,4))
+fig_macd=plt.figure(figsize=(12,4))
 
-plt.plot(data["RSI"])
+plt.plot(filtered_data["MACD"],label="MACD")
+plt.plot(filtered_data["Signal_MACD"],label="Signal")
 
-plt.axhline(70)
-plt.axhline(30)
+plt.legend()
 
-st.pyplot(fig3)
+st.pyplot(fig_macd)
+
 
 # =============================
-# MACD
+# AI MODEL COMPARISON
 # =============================
 
-st.subheader("📊 MACD")
+st.subheader("🤖 AI Model Comparison")
 
-fig4 = plt.figure(figsize=(12,4))
+fig_compare=plt.figure(figsize=(12,6))
 
-plt.plot(data["MACD"])
-plt.plot(data["Signal_MACD"])
+plt.plot(real_values,label="Real Price")
+plt.plot(pred_close,label="LSTM Prediction")
 
-st.pyplot(fig4)
+plt.plot(
+    range(len(real_values)-len(rf_pred),len(real_values)),
+    rf_pred,
+    label="Random Forest"
+)
+
+plt.legend()
+st.pyplot(fig_compare)
+
+
+# =============================
+# MODEL PERFORMANCE
+# =============================
+
+st.subheader("🏆 AI Model Performance")
+
+compare_df=pd.DataFrame({
+"Model":["LSTM","Random Forest"],
+"Accuracy":[accuracy,rf_accuracy]
+})
+
+st.dataframe(compare_df,use_container_width=True)
+
 
 # =============================
 # TELEGRAM
 # =============================
 
-st.sidebar.header("📲 Cài đặt Telegram")
+st.sidebar.header("Telegram Bot")
 
-tele_token = st.sidebar.text_input("Bot Token", type="password")
-tele_chat_id = st.sidebar.text_input("Chat ID")
+tele_token=st.sidebar.text_input("Bot Token",type="password")
+tele_chat_id=st.sidebar.text_input("Chat ID")
 
-msg_content = f"""
-🚀 Tín hiệu AI Bitcoin
+msg=f"""
+AI Bitcoin Signal
 
-📍 Trạng thái: {signal}
-💰 Giá hiện tại: ${last_price:,.2f}
-🔮 Dự đoán ngày mai: ${pred_price:,.2f}
-📈 Thay đổi: {profit_percent:.2f}%
-📊 RSI: {last_rsi:.2f}
-🎯 Accuracy: {accuracy:.2f}%
+Price: ${last_price:,.2f}
+Prediction: ${pred_price:,.2f}
+
+LSTM Accuracy: {accuracy:.2f}%
+RandomForest Accuracy: {rf_accuracy:.2f}%
 """
 
-if st.sidebar.button("Gửi báo cáo qua Telegram"):
+if st.sidebar.button("Send Signal"):
 
     if tele_token and tele_chat_id:
 
-        res = send_telegram_message(
-            tele_token,
-            tele_chat_id,
-            msg_content
-        )
+        res=send_telegram_message(tele_token,tele_chat_id,msg)
 
         if res.get("ok"):
-            st.sidebar.success("✅ Đã gửi Telegram")
+            st.sidebar.success("Đã gửi Telegram")
         else:
-            st.sidebar.error("❌ Gửi thất bại")
+            st.sidebar.error("Gửi thất bại")
 
     else:
         st.sidebar.warning("Nhập Token và Chat ID")
-
-# =============================
-# FORECAST
-# =============================
-
-st.subheader("🔮 Dự đoán 30 ngày")
-
-future_dates = pd.date_range(
-    data.index[-1],
-    periods=future_days+1
-)[1:]
-
-fig5 = plt.figure(figsize=(12,5))
-
-plt.plot(future_dates, future_prices)
-
-st.pyplot(fig5)

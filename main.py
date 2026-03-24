@@ -45,7 +45,7 @@ st.title("📈 Hệ Thống Dự Đoán Bitcoin Bằng AI")
 
 @st.cache_data
 def load_data():
-    data = yf.download("BTC-USD", start="2020-01-01")
+    data = yf.download("BTC-USD", start="2025-01-01")
 
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)
@@ -143,7 +143,7 @@ def train_model(X,y):
     model.add(Dense(1))
 
     model.compile(optimizer="adam",loss="mse")
-    model.fit(X,y,epochs=50,batch_size=32,verbose=0)
+    model.fit(X,y,epochs=5,batch_size=32,verbose=0)
 
     return model
 

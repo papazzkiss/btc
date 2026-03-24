@@ -45,7 +45,7 @@ st.title("📈 Hệ Thống Dự Đoán Bitcoin Bằng AI")
 
 @st.cache_data
 def load_data():
-    data = yf.download("BTC-USD", start="2025-01-01")
+    data = yf.download("BTC-USD", start="2022-01-01")
 
     if isinstance(data.columns, pd.MultiIndex):
         data.columns = data.columns.get_level_values(0)

@@ -4,228 +4,307 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
 import requests
+import threading
 
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
 
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, LSTM
+from tensorflow.keras.layers import Dense, LSTM, Dropout
+
+
+# =============================
+# TELEGRAM (ASYNC)
+# =============================
+
+def send_telegram_async(token, chat_id, text):
+    def send():
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                data={"chat_id": chat_id, "text": text},
+                timeout=3
+            )
+        except:
+            pass
+    threading.Thread(target=send).start()
+
 
 # =============================
 # CONFIG
 # =============================
-st.set_page_config(page_title="AI Bitcoin Trading PRO", layout="wide")
-st.title("🚀 AI Bitcoin Trading PRO")
 
-# =============================
-# TELEGRAM
-# =============================
-def send_telegram_message(token, chat_id, text):
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    return requests.post(url, data=payload).json()
+st.set_page_config(page_title="AI Bitcoin Trading", layout="wide")
+st.title("📈 Hệ Thống Dự Đoán Bitcoin Bằng AI")
+
 
 # =============================
 # LOAD DATA
 # =============================
+
 @st.cache_data
 def load_data():
-    data = yf.download("BTC-USD", start="2018-01-01")
+    data = yf.download("BTC-USD", start="2020-01-01")
+
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = data.columns.get_level_values(0)
+
     data.dropna(inplace=True)
     return data
 
 data = load_data()
 
-# =============================
-# BẢNG 1: DATA GỐC
-# =============================
-st.subheader("📊 Bảng 1: Dữ liệu gốc")
-st.dataframe(data.tail(10), use_container_width=True)
 
 # =============================
-# INDICATORS
+# DATA TABLE
 # =============================
-data["MA50"] = data["Close"].rolling(50).mean()
-data["MA200"] = data["Close"].rolling(200).mean()
 
-# RSI
-delta = data["Close"].diff()
+st.subheader("📊 Dữ liệu Bitcoin")
+rows = st.slider("Số dòng hiển thị",5,100,10)
+st.dataframe(data.tail(rows),use_container_width=True)
+
+
+# =============================
+# TECHNICAL INDICATORS
+# =============================
+
+filtered_data = data.copy()
+
+filtered_data["MA50"] = filtered_data["Close"].rolling(50).mean()
+filtered_data["MA200"] = filtered_data["Close"].rolling(200).mean()
+
+delta = filtered_data["Close"].diff()
 gain = delta.clip(lower=0)
 loss = -delta.clip(upper=0)
 
-rs = gain.rolling(14).mean() / loss.rolling(14).mean()
-data["RSI"] = 100 - (100/(1+rs))
+avg_gain = gain.rolling(14).mean()
+avg_loss = loss.rolling(14).mean()
 
-# MACD
-exp1 = data["Close"].ewm(span=12).mean()
-exp2 = data["Close"].ewm(span=26).mean()
-data["MACD"] = exp1 - exp2
-data["Signal"] = data["MACD"].ewm(span=9).mean()
+rs = avg_gain / avg_loss
+filtered_data["RSI"] = 100 - (100 / (1 + rs))
 
-data.dropna(inplace=True)
+exp1 = filtered_data["Close"].ewm(span=12, adjust=False).mean()
+exp2 = filtered_data["Close"].ewm(span=26, adjust=False).mean()
 
-# =============================
-# BẢNG 2: INDICATORS
-# =============================
-st.subheader("📊 Bảng 2: Indicators")
-st.dataframe(data[["Close","MA50","MA200","RSI","MACD"]].tail(10), use_container_width=True)
+filtered_data["MACD"] = exp1 - exp2
+filtered_data["Signal_MACD"] = filtered_data["MACD"].ewm(span=9, adjust=False).mean()
+
+filtered_data.dropna(inplace=True)
+
 
 # =============================
-# LSTM
+# FEATURES
 # =============================
-dataset = data["Close"].values.reshape(-1,1)
+
+features = filtered_data[
+["Close","MA50","MA200","RSI","MACD","Signal_MACD"]
+]
+
+dataset = features.values
+
+
+# =============================
+# SCALE
+# =============================
 
 scaler = MinMaxScaler()
-scaled = scaler.fit_transform(dataset)
+scaled_data = scaler.fit_transform(dataset)
 
-train_len = int(len(scaled)*0.8)
+training_len = int(len(scaled_data)*0.8)
+train_data = scaled_data[:training_len]
 
-X,y=[],[]
 
-for i in range(60,train_len):
-    X.append(scaled[i-60:i])
-    y.append(scaled[i])
+# =============================
+# SEQUENCE
+# =============================
 
-X,y=np.array(X),np.array(y)
+window = 90
+X=[]
+y=[]
 
-model=Sequential()
-model.add(LSTM(64,return_sequences=True,input_shape=(60,1)))
-model.add(LSTM(64))
-model.add(Dense(1))
-model.compile(optimizer="adam",loss="mse")
+for i in range(window,len(train_data)):
+    X.append(train_data[i-window:i])
+    y.append(train_data[i,0])
 
-model.fit(X,y,epochs=5,batch_size=32,verbose=0)
+X=np.array(X)
+y=np.array(y)
 
-# TEST
-test = scaled[train_len-60:]
+
+# =============================
+# TRAIN LSTM MODEL
+# =============================
+
+def train_model(X,y):
+    model=Sequential()
+    model.add(LSTM(128,return_sequences=True,input_shape=(X.shape[1],X.shape[2])))
+    model.add(Dropout(0.3))
+    model.add(LSTM(64))
+    model.add(Dense(1))
+
+    model.compile(optimizer="adam",loss="mse")
+    model.fit(X,y,epochs=50,batch_size=32,verbose=0)
+
+    return model
+
+model=train_model(X,y)
+
+
+# =============================
+# TEST LSTM
+# =============================
+
+test_data=scaled_data[training_len-window:]
+
 X_test=[]
-
-for i in range(60,len(test)):
-    X_test.append(test[i-60:i])
+for i in range(window,len(test_data)):
+    X_test.append(test_data[i-window:i])
 
 X_test=np.array(X_test)
 
-pred=model.predict(X_test)
-pred=scaler.inverse_transform(pred)
+predictions=model.predict(X_test,verbose=0)
 
-real=data["Close"][train_len:].values[:len(pred)]
+pred_close=[]
+for i in range(len(predictions)):
+    row=test_data[window+i].copy()
+    row[0]=predictions[i][0]
+    inv=scaler.inverse_transform([row])
+    pred_close.append(inv[0][0])
+
+pred_close=np.array(pred_close)
+real_values=filtered_data["Close"][training_len:].values[:len(pred_close)]
+
 
 # =============================
 # RANDOM FOREST
 # =============================
-rf = data[["Close"]].copy()
-rf["lag1"]=rf["Close"].shift(1)
-rf["lag2"]=rf["Close"].shift(2)
-rf["lag3"]=rf["Close"].shift(3)
-rf.dropna(inplace=True)
 
-X_rf=rf[["lag1","lag2","lag3"]]
-y_rf=rf["Close"]
+rf_data = filtered_data[["Close"]].copy()
 
-split=int(len(rf)*0.8)
+rf_data["lag1"] = rf_data["Close"].shift(1)
+rf_data["lag2"] = rf_data["Close"].shift(2)
+rf_data["lag3"] = rf_data["Close"].shift(3)
 
-X_train_rf=X_rf[:split]
-X_test_rf=X_rf[split:]
-y_train_rf=y_rf[:split]
-y_test_rf=y_rf[split:]
+rf_data.dropna(inplace=True)
 
-model_rf=RandomForestRegressor(n_estimators=100)
-model_rf.fit(X_train_rf,y_train_rf)
+X_rf = rf_data[["lag1","lag2","lag3"]]
+y_rf = rf_data["Close"]
 
-rf_pred=model_rf.predict(X_test_rf)
+split = int(len(rf_data)*0.8)
 
-# FIX LỖI Ở ĐÂY
-y_test_rf = y_test_rf.values
+X_train_rf = X_rf[:split]
+X_test_rf = X_rf[split:]
+y_train_rf = y_rf[:split]
+y_test_rf = y_rf[split:]
 
-rf_rmse=np.sqrt(mean_squared_error(y_test_rf,rf_pred))
-rf_mape=np.mean(np.abs((y_test_rf-rf_pred)/y_test_rf))*100
-rf_acc=100-rf_mape
+rf_model = RandomForestRegressor(n_estimators=200,max_depth=10,random_state=42)
+rf_model.fit(X_train_rf, y_train_rf)
+
+rf_pred = rf_model.predict(X_test_rf)
+rf_rmse = np.sqrt(mean_squared_error(y_test_rf, rf_pred))
+
 
 # =============================
-# LSTM ACC
+# ACCURACY
 # =============================
-mape=np.mean(np.abs((real-pred.flatten())/real))*100
-lstm_acc=100-mape
+
+recent=150
+
+real_recent=real_values[-recent:]
+pred_recent=pred_close[-recent:]
+
+mape=np.mean(np.abs((real_recent-pred_recent)/real_recent))*100
+accuracy=100-mape
+
+rf_recent = min(150, len(rf_pred))
+rf_real_recent = y_test_rf.values[-rf_recent:]
+rf_pred_recent = rf_pred[-rf_recent:]
+
+rf_mape = np.mean(np.abs((rf_real_recent-rf_pred_recent)/rf_real_recent))*100
+rf_accuracy = 100-rf_mape
+
 
 # =============================
-# BẢNG 3: DỰ ĐOÁN
+# SIGNAL LOGIC
 # =============================
-df_pred=pd.DataFrame({
-    "Real": real,
-    "LSTM": pred.flatten()
-})
 
-st.subheader("📊 Bảng 3: LSTM Prediction")
-st.dataframe(df_pred.tail(10), use_container_width=True)
+last_price=float(filtered_data["Close"].iloc[-1])
+pred_price=float(pred_close[-1])
+last_rsi=float(filtered_data["RSI"].iloc[-1])
 
-# =============================
-# BẢNG 4: RANDOM FOREST
-# =============================
-df_rf=pd.DataFrame({
-    "Real": y_test_rf,
-    "RF": rf_pred
-})
+profit_percent = ((pred_price - last_price) / last_price) * 100
 
-st.subheader("📊 Bảng 4: Random Forest")
-st.dataframe(df_rf.tail(10), use_container_width=True)
-
-# =============================
-# BẢNG 5: SO SÁNH MODEL
-# =============================
-compare=pd.DataFrame({
-    "Model":["LSTM","Random Forest"],
-    "Accuracy":[lstm_acc,rf_acc]
-})
-
-st.subheader("📊 Bảng 5: So sánh AI")
-st.dataframe(compare, use_container_width=True)
-
-# =============================
-# SIGNAL
-# =============================
-last_price=float(data["Close"].iloc[-1])
-pred_price=float(pred[-1])
-
-change=(pred_price-last_price)/last_price
-rsi=float(data["RSI"].iloc[-1])
-
-if change>0.02 and rsi<70:
-    signal="BUY"
-elif change<-0.02 and rsi>30:
-    signal="SELL"
+if profit_percent > 2 and last_rsi < 65:
+    signal = "BUY"
+elif profit_percent < -2 and last_rsi > 35:
+    signal = "SELL"
 else:
-    signal="HOLD"
+    signal = "HOLD"
 
-st.subheader("📢 Tín hiệu")
 
-if signal=="BUY":
-    st.success("🟢 BUY")
-elif signal=="SELL":
-    st.error("🔴 SELL")
+# =============================
+# DASHBOARD
+# =============================
+
+st.subheader("🤖 AI Dashboard")
+
+col1,col2,col3,col4,col5,col6,col7=st.columns(7)
+
+col1.metric("Giá hiện tại",f"${last_price:,.0f}")
+col2.metric("LSTM Predict",f"${pred_price:,.0f}")
+col3.metric("RSI",f"{last_rsi:.2f}")
+col4.metric("LSTM Accuracy",f"{accuracy:.2f}%")
+col5.metric("RF RMSE",f"{rf_rmse:.0f}")
+col6.metric("RF Accuracy",f"{rf_accuracy:.2f}%")
+
+if signal == "BUY":
+    col7.metric("Signal","🟢 BUY")
+elif signal == "SELL":
+    col7.metric("Signal","🔴 SELL")
 else:
-    st.warning("🟡 HOLD")
+    col7.metric("Signal","🟡 HOLD")
+
 
 # =============================
-# TELEGRAM
+# SIGNAL UI
 # =============================
-st.sidebar.header("Telegram")
 
-token=st.sidebar.text_input("Token")
-chat_id=st.sidebar.text_input("Chat ID")
+st.subheader("📢 Tín hiệu giao dịch")
+
+if signal == "BUY":
+    st.success(f"🟢 BUY (+{profit_percent:.2f}%)")
+elif signal == "SELL":
+    st.error(f"🔴 SELL ({profit_percent:.2f}%)")
+else:
+    st.warning(f"🟡 HOLD ({profit_percent:.2f}%)")
+
+
+# =============================
+# TELEGRAM UI
+# =============================
+
+st.sidebar.header("Telegram Bot")
+
+tele_token=st.sidebar.text_input("Bot Token",type="password")
+tele_chat_id=st.sidebar.text_input("Chat ID")
 
 msg=f"""
-AI SIGNAL
+🚀 AI Bitcoin Signal
 
-Signal: {signal}
-Price: {last_price}
-Pred: {pred_price}
+📍 Signal: {signal}
+💰 Price: ${last_price:,.2f}
+🔮 Prediction: ${pred_price:,.2f}
+📈 Change: {profit_percent:.2f}%
 
-LSTM: {lstm_acc:.2f}%
-RF: {rf_acc:.2f}%
+📊 RSI: {last_rsi:.2f}
+
+🎯 LSTM: {accuracy:.2f}%
+🤖 RF: {rf_accuracy:.2f}%
 """
 
-if st.sidebar.button("Send"):
-    if token and chat_id:
-        send_telegram_message(token,chat_id,msg)
-        st.sidebar.success("Sent")
+if st.sidebar.button("Send Signal"):
+    if tele_token and tele_chat_id:
+        send_telegram_async(tele_token, tele_chat_id, msg)
+        st.sidebar.success("✅ Gửi ngay")
+    else:
+        st.sidebar.warning("Nhập Token và Chat ID")
